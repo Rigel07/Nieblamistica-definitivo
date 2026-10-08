@@ -1,80 +1,61 @@
-name: Build Niebla Mística
+name: Build Niebla Mistica
 
 on:
   push:
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 jobs:
   build:
     runs-on: ubuntu-latest
-
     steps:
-      - name: Descargar repositorio
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Configurar Java 17
-        uses: actions/setup-java@v4
+      - uses: actions/setup-java@v4
         with:
           distribution: temurin
-          java-version: '17'
+          java-version: 17
 
-      - name: Configurar Gradle
-        uses: gradle/actions/setup-gradle@v3
+      - uses: gradle/actions/setup-gradle@v3
         with:
           gradle-version: 8.1.1
 
-      - name: Comprobar estructura del proyecto
+      - name: Descomprimir el zip y compilar
         run: |
-          echo "=== RAÍZ DEL REPOSITORIO ==="
+          mkdir -p "$GITHUB_WORKSPACE/salida"
+          echo "=== RAIZ DEL REPOSITORIO ==="
           ls -la
 
-          echo ""
-          echo "=== BUSCANDO PROYECTOS GRADLE ==="
+          # 1) Si hay un zip, se descomprime y se busca el proyecto dentro
+          ZIP=$(find . -maxdepth 2 -name '*.zip' -not -path './.git/*' | head -n 1 || true)
+          if [ -n "$ZIP" ]; then
+            echo "Encontrado zip: $ZIP"
+            rm -rf /tmp/proyecto && mkdir -p /tmp/proyecto
+            unzip -q "$ZIP" -d /tmp/proyecto
+            SETTINGS=$(find /tmp/proyecto -name settings.gradle -not -path '*/build/*' | head -n 1)
+          else
+            echo "No hay zip: busco el proyecto ya subido en el repositorio"
+            SETTINGS=$(find "$GITHUB_WORKSPACE" -name settings.gradle -not -path '*/.git/*' | head -n 1)
+          fi
 
-          find . \
-            -path './.git' -prune -o \
-            -name 'settings.gradle' \
-            -print
-
-          echo ""
-          echo "=== COMPROBANDO SRC ==="
-
-          if [ ! -d "src/main/java" ]; then
-            echo "ERROR: falta src/main/java"
-            echo "La estructura del proyecto está mal colocada."
+          if [ -z "${SETTINGS:-}" ]; then
+            echo "ERROR: no encuentro settings.gradle (ni en un zip ni en el repositorio)"
             exit 1
           fi
 
-          if [ ! -d "src/main/resources" ]; then
-            echo "ERROR: falta src/main/resources"
-            exit 1
-          fi
+          DIR=$(dirname "$SETTINGS")
+          echo "Proyecto en: $DIR"
+          ls -la "$DIR"
+          test -d "$DIR/src/main/java" || { echo "ERROR: falta src/main/java en $DIR"; exit 1; }
+          echo "Archivos .java: $(find "$DIR/src/main/java" -name '*.java' | wc -l)"
 
-          if [ ! -f "build.gradle" ]; then
-            echo "ERROR: falta build.gradle"
-            exit 1
-          fi
+          (cd "$DIR" && gradle build --no-daemon --stacktrace)
+          cp "$DIR"/build/libs/*.jar "$GITHUB_WORKSPACE/salida/"
+          ls -la "$GITHUB_WORKSPACE/salida"
 
-          if [ ! -f "settings.gradle" ]; then
-            echo "ERROR: falta settings.gradle"
-            exit 1
-          fi
-
-          echo ""
-          echo "ESTRUCTURA CORRECTA"
-
-      - name: Compilar mod
-        run: |
-          chmod +x gradlew 2>/dev/null || true
-          gradle build --no-daemon
-
-      - name: Mostrar JAR generado
-        run: |
-          echo "=== JARS GENERADOS ==="
-          find build/libs -type f -name '*.jar' -ls
-
-      - name: Subir JAR
-        uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v4
         with:
-          name: niebla-mistica-jar
-          path: build/libs/*.jar
+          name: niebla-mistica
+          path: salida/*.jar
